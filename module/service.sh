@@ -96,16 +96,67 @@ guarded_insmod() {
 	return $rc
 }
 
+# 设备指纹：品牌 / 厂商 / 机型 / fingerprint / device 名一起看。
+# 一加、OPPO、realme 的 vendor 模块共用 oplus 前缀，fingerprint 兜底最稳
+device_info() {
+	d_brand=$(getprop ro.product.vendor.brand 2>/dev/null)
+	[ -n "$d_brand" ] || d_brand=$(getprop ro.product.brand 2>/dev/null)
+	d_model=$(getprop ro.product.vendor.model 2>/dev/null)
+	[ -n "$d_model" ] || d_model=$(getprop ro.product.model 2>/dev/null)
+	d_manuf=$(getprop ro.product.vendor.manufacturer 2>/dev/null)
+	[ -n "$d_manuf" ] || d_manuf=$(getprop ro.product.manufacturer 2>/dev/null)
+	d_fp=$(getprop ro.build.fingerprint 2>/dev/null)
+	[ -n "$d_fp" ] || d_fp=$(getprop ro.vendor.build.fingerprint 2>/dev/null)
+	d_dev=$(getprop ro.product.vendor.device 2>/dev/null)
+	[ -n "$d_dev" ] || d_dev=$(getprop ro.product.device 2>/dev/null)
+	return 0
+}
+
 is_oplus() {
-	for p in ro.product.vendor.brand ro.product.brand ro.product.manufacturer \
-		ro.product.vendor.manufacturer ro.build.product; do
-		v=$(getprop "$p" 2>/dev/null | tr 'A-Z' 'a-z')
-		case "$v" in
-		*oppo* | *oneplus* | *realme* | *oplus*) return 0 ;;
-		esac
-	done
+	device_info
+	blob=$(printf '%s %s %s %s %s' "$d_brand" "$d_manuf" "$d_model" "$d_fp" "$d_dev" | tr 'A-Z' 'a-z')
+	case "$blob" in
+	*oppo* | *oneplus* | *realme* | *oplus*) return 0 ;;
+	esac
 	return 1
 }
+
+runtime() {
+	if [ -d /data/adb/ksu ]; then
+		echo KernelSU
+	elif [ -d /data/adb/ap ]; then
+		echo APatch
+	elif [ -d /data/adb/magisk ]; then
+		echo Magisk
+	else
+		echo unknown
+	fi
+}
+
+# ---- status 模式：WebUI 调用，只读不加载 ------------------------------
+if [ "$1" = "status" ]; then
+	device_info
+	if is_oplus; then oplus=1; else oplus=0; fi
+	echo "version=$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)"
+	echo "manager=$(runtime)"
+	echo "kernel=$(uname -r)"
+	echo "kmi=$(cat "$MODDIR/kmi" 2>/dev/null)"
+	if loaded droid_lkm; then echo "loaded=1"; else echo "loaded=0"; fi
+	if loaded droid_lkm_compat; then echo "compat=1"; else echo "compat=0"; fi
+	if [ -f "$BLOCK" ]; then echo "blocked=1"; else echo "blocked=0"; fi
+	if [ -f "$MODDIR/insmod.crash" ]; then echo "crash=1"; else echo "crash=0"; fi
+	echo "oplus=$oplus"
+	echo "brand=${d_brand:-?}"
+	echo "model=${d_model:-?}"
+	echo "fingerprint=${d_fp:-?}"
+	for p in /sys/module/droid_lkm/parameters/*; do
+		[ -f "$p" ] || continue
+		echo "param.${p##*/}=$(cat "$p" 2>/dev/null)"
+	done
+	echo "---log---"
+	tail -n 25 "$LOG" 2>/dev/null
+	exit 0
+fi
 
 # ---- 崩溃闸门 ----------------------------------------------------------
 if [ -f "$MARK" ]; then
@@ -126,6 +177,8 @@ if loaded droid_lkm; then
 fi
 
 KMI=$(cat "$MODDIR/kmi" 2>/dev/null)
+if is_oplus; then oplus=1; else oplus=0; fi
+ph_log "device: brand=${d_brand:-?} model=${d_model:-?} oplus=$oplus"
 KO=$MODDIR/ko/droid_lkm.ko
 if [ ! -f "$KO" ]; then
 	ph_log "ko missing: $KO (reinstall the module)"
@@ -160,8 +213,12 @@ want_compat=0
 case "$(conf compat auto)" in
 off | 0 | no | false) want_compat=0 ;;
 on | 1 | yes | true) want_compat=1 ;;
-*) is_oplus && want_compat=1 ;;
+*) [ "$oplus" = 1 ] && want_compat=1 ;;
 esac
+
+if [ "$want_compat" != 1 ] && [ -f "$COMPAT" ]; then
+	ph_log "compat: not needed (oplus=$oplus, compat=$(conf compat auto))"
+fi
 
 if [ "$want_compat" = 1 ] && [ -f "$COMPAT" ] && ! loaded droid_lkm_compat; then
 	ph_log "loading droid_lkm_compat.ko"

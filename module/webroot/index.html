@@ -14,19 +14,17 @@
            --accent:#2f6bed; --ok:#0f9d63; --bad:#d93a3a; --warn:#b46b00; }
   }
   *{box-sizing:border-box}
-  body{
-    margin:0;background:var(--bg);color:var(--fg);
+  body{margin:0;background:var(--bg);color:var(--fg);
     font:15px/1.5 "SF Pro Text",Roboto,"PingFang SC","Noto Sans CJK SC",sans-serif;
-    padding:calc(18px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
-  }
+    padding:calc(18px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));}
   h1{font-size:19px;margin:0 0 2px;letter-spacing:.2px}
   .sub{color:var(--dim);font-size:12.5px;margin-bottom:16px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px}
   .row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0}
   .row+.row{border-top:1px solid var(--line)}
-  .k{color:var(--dim);font-size:13.5px}
+  .k{color:var(--dim);font-size:13.5px;flex:0 0 auto}
   .v{font-variant-numeric:tabular-nums;font-size:13.5px;text-align:right;word-break:break-all}
-  .badge{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+  .badge{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
   .badge.on{color:var(--ok);border-color:var(--ok)}
   .badge.off{color:var(--bad);border-color:var(--bad)}
   .badge.warn{color:var(--warn);border-color:var(--warn)}
@@ -45,12 +43,15 @@
 </head>
 <body>
   <h1>phDroid</h1>
-  <div class="sub">droid_lkm · KallRecon + HooKern + Type_info</div>
+  <div class="sub" id="sub">droid_lkm · KallRecon + HooKern + Type_info</div>
 
   <div class="card">
     <div class="row"><span class="k">droid_lkm</span><span id="state" class="badge">读取中</span></div>
     <div class="row"><span class="k">内核</span><span id="kernel" class="v">–</span></div>
     <div class="row"><span class="k">构建 KMI</span><span id="kmi" class="v">–</span></div>
+    <div class="row"><span class="k">设备</span><span id="device" class="v">–</span></div>
+    <div class="row"><span class="k">一加 / OPPO</span><span id="oplus" class="badge">–</span></div>
+    <div class="row"><span class="k">兼容模块</span><span id="compat" class="badge">–</span></div>
     <div class="row"><span class="k">加载阻断</span><span id="blocked" class="badge">–</span></div>
   </div>
 
@@ -69,126 +70,119 @@
 <script>
 (function () {
   var M = "/data/adb/modules/phdroid";
+  var CMD_STATUS = "sh " + M + "/service.sh status";
   var busy = false;
+  var cbSeq = 0;
 
-  var STATUS = [
-    "M=" + M,
-    'echo "version=$(sed -n \'s/^version=//p\' $M/module.prop 2>/dev/null)"',
-    'echo "kernel=$(uname -r)"',
-    'echo "kmi=$(cat $M/kmi 2>/dev/null)"',
-    'echo "loaded=$(grep -c \'^droid_lkm \' /proc/modules 2>/dev/null)"',
-    'echo "compat=$(grep -c \'^droid_lkm_compat \' /proc/modules 2>/dev/null)"',
-    'echo "blocked=$([ -f $M/blocked ] && echo 1 || echo 0)"',
-    'echo "===params==="',
-    'for p in /sys/module/droid_lkm/parameters/*; do [ -f "$p" ] && echo "${p##*/}=$(cat "$p")"; done',
-    'echo "===log==="',
-    'tail -n 30 $M/phdroid.log 2>/dev/null'
-  ].join("\n");
-
-  // KernelSU / APatch 注入 window.ksu.exec(command, optionsJson, callback)
-  // 老版本也可能直接返回 Promise，两种都兜住
+  // KernelSU 的 ksu.exec 签名是 exec(command, optionsJson, callbackName)，
+  // 第三个参数是回调函数名（字符串），由 JSBridge 回头调用 window[名字]。
+  // 直接传函数不会触发，WebUI 会一直停在“读取中”。
   function sh(cmd) {
     return new Promise(function (resolve) {
-      var k = window.ksu;
-      if (!k || typeof k.exec !== "function") {
-        resolve({ errno: -1, stdout: "", stderr: "当前环境没有 WebUI API" });
+      if (!window.ksu || typeof window.ksu.exec !== "function") {
+        resolve({ errno: -1, stdout: "", stderr: "当前环境没有 WebUI API（需要 KernelSU / APatch）" });
         return;
       }
-      var settled = false;
-      function done(errno, stdout, stderr) {
-        if (settled) return;
-        settled = true;
+      var name = "ph_cb_" + Date.now() + "_" + (cbSeq++);
+      var done = false;
+      function finish(errno, stdout, stderr) {
+        if (done) return;
+        done = true;
         resolve({ errno: errno | 0, stdout: stdout || "", stderr: stderr || "" });
       }
+      window[name] = finish;
       try {
-        var r = k.exec(cmd, "{}", function (e, o, s) { done(e, o, s); });
-        if (r && typeof r.then === "function") {
-          r.then(function (v) { done(v.errno, v.stdout, v.stderr); })
-           .catch(function (e) { done(-1, "", String(e)); });
-        }
+        window.ksu.exec(cmd, "{}", name);
       } catch (e) {
-        done(-1, "", String(e));
+        finish(-1, "", String(e));
       }
-      setTimeout(function () { done(-1, "", "timeout"); }, 20000);
+      setTimeout(function () { finish(-1, "", "执行超时（8s）"); }, 8000);
     });
   }
 
-  function kv(text) {
-    var map = {};
-    (text || "").split("\n").forEach(function (line) {
+  function parse(text) {
+    var idx = text.indexOf("---log---");
+    var head = idx >= 0 ? text.slice(0, idx) : text;
+    var log = idx >= 0 ? text.slice(idx + 9) : "";
+    var map = {}, params = [];
+    head.split("\n").forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
       var i = line.indexOf("=");
-      if (i > 0) map[line.slice(0, i)] = line.slice(i + 1).trim();
+      if (i < 0) return;
+      var k = line.slice(0, i), v = line.slice(i + 1);
+      if (k.indexOf("param.") === 0) params.push(k.slice(6) + " = " + v);
+      else map[k] = v;
     });
-    return map;
+    return { map: map, params: params, log: log.trim() };
+  }
+
+  function setBadge(id, text, cls) {
+    var el = document.getElementById(id);
+    el.textContent = text;
+    el.className = "badge" + (cls ? " " + cls : "");
   }
 
   function render(text) {
-    var parts = text.split("===params===");
-    var head = kv(parts[0] || "");
-    var rest = (parts[1] || "").split("===log===");
+    var d = parse(text || "");
+    var m = d.map;
 
-    var st = document.getElementById("state");
-    var loaded = head.loaded === "1";
-    var blocked = head.blocked === "1";
+    var loaded = m.loaded === "1";
+    var blocked = m.blocked === "1";
+    var oplus = m.oplus === "1";
 
-    st.textContent = loaded ? "已加载" : (blocked ? "已阻断" : "未加载");
-    st.className = "badge " + (loaded ? "on" : (blocked ? "warn" : "off"));
+    setBadge("state", loaded ? "已加载" : (blocked ? "已阻断" : "未加载"),
+             loaded ? "on" : (blocked ? "warn" : "off"));
+    setBadge("oplus", oplus ? "是" : "否", oplus ? "on" : "");
+    setBadge("compat", m.compat === "1" ? "已加载" : (oplus ? "未加载" : "不需要"),
+             m.compat === "1" ? "on" : "");
+    setBadge("blocked", blocked ? "是（上次 insmod 崩溃）" : "否", blocked ? "warn" : "on");
 
-    document.getElementById("kernel").textContent = head.kernel || "–";
-    document.getElementById("kmi").textContent = head.kmi || "–";
+    document.getElementById("kernel").textContent = m.kernel || "–";
+    document.getElementById("kmi").textContent = m.kmi || "–";
+    document.getElementById("device").textContent = (m.brand || "?") + " " + (m.model || "");
+    document.getElementById("sub").textContent =
+      (m.version ? m.version + " · " : "") + "droid_lkm · " + (m.manager || "");
 
-    var b = document.getElementById("blocked");
-    b.textContent = blocked ? "是（上次 insmod 崩溃）" : "否";
-    b.className = "badge " + (blocked ? "warn" : "on");
-
-    document.getElementById("params").textContent = (rest[0] || "").trim() || "（模块未加载）";
-    document.getElementById("log").textContent = (rest[1] || "").trim() || "（空）";
+    document.getElementById("params").textContent = d.params.length ? d.params.join("\n") : "（模块未加载）";
+    document.getElementById("log").textContent = d.log || "（空）";
   }
 
-  function setButtons(on) {
+  function setBusy(on) {
+    busy = on;
     ["btn-refresh", "btn-load", "btn-log"].forEach(function (id) {
-      document.getElementById(id).disabled = !on;
+      document.getElementById(id).disabled = on;
     });
   }
 
   function loadStatus() {
     if (busy) return;
-    busy = true;
-    setButtons(false);
-    sh(STATUS).then(function (r) {
-      busy = false;
-      setButtons(true);
-      render((r.stdout || "") + (r.stderr ? "\n" + r.stderr : ""));
+    setBusy(true);
+    sh(CMD_STATUS).then(function (r) {
+      setBusy(false);
+      if (r.errno !== 0 && !r.stdout) {
+        document.getElementById("log").textContent = "读取失败 (errno " + r.errno + ")\n" + (r.stderr || "");
+        return;
+      }
+      render(r.stdout);
     });
   }
 
-  document.getElementById("btn-refresh").onclick = function () {
-    loadStatus();
-  };
+  document.getElementById("btn-refresh").onclick = loadStatus;
 
   document.getElementById("btn-load").onclick = function () {
     if (busy) return;
-    busy = true;
-    setButtons(false);
+    setBusy(true);
     document.getElementById("log").textContent = "解除阻断并重新加载 …";
-    // 先清掉崩溃闸门，再走和开机完全相同的加载脚本
-    sh("M=" + M + "; rm -f $M/blocked $M/insmod.crash; sh $M/service.sh; echo done")
-      .then(function () {
-        busy = false;
-        setButtons(true);
-        loadStatus();
-      });
+    sh("rm -f " + M + "/blocked " + M + "/insmod.crash; sh " + M + "/service.sh").then(function () {
+      loadStatus();
+    });
   };
 
   document.getElementById("btn-log").onclick = function () {
     if (busy) return;
-    busy = true;
-    setButtons(false);
-    sh(": > " + M + "/phdroid.log; echo cleared").then(function () {
-      busy = false;
-      setButtons(true);
-      loadStatus();
-    });
+    setBusy(true);
+    sh(": > " + M + "/phdroid.log").then(function () { loadStatus(); });
   };
 
   loadStatus();

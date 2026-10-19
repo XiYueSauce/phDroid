@@ -92,6 +92,11 @@ chmod 0755 "$MODPATH"/ko "$MODPATH"/webroot 2>/dev/null
 chmod 0644 "$MODPATH"/ko/*.ko 2>/dev/null
 
 # ---- 安装摘要 ----------------------------------------------------------
+BRAND=$(getprop ro.product.vendor.brand 2>/dev/null)
+[ -n "$BRAND" ] || BRAND=$(getprop ro.product.brand 2>/dev/null)
+MODEL=$(getprop ro.product.vendor.model 2>/dev/null)
+[ -n "$MODEL" ] || MODEL=$(getprop ro.product.model 2>/dev/null)
+ui_print "- device : ${BRAND:-?} ${MODEL:-}"
 ui_print "- kernel : $RELEASE"
 ui_print "- kmi    : $BEST"
 ui_print "- loaded : service.sh (late_start)"

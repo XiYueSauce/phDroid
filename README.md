@@ -39,9 +39,7 @@
 
 ## 安装
 
-1. 从 Release 下载 zip（单 KMI 包体积最小；合集包会自动挑对应构建）：
-   - `phDroid-<ver>-<kmi>.zip`
-   - `phDroid-<ver>-all.zip`
+1. 从 Release 下载 `phDroid-<ver>.zip`（单个整包，里面含全部 KMI 的构建）
 2. 在 KernelSU / APatch / Magisk 里刷入，重启。
 3. 打开模块的 WebUI（KernelSU / APatch）确认 `droid_lkm` 已加载。
 
@@ -73,6 +71,13 @@ OTA 换了 KMI 需要重装模块（或重新刷合集包）。
 | `ghost` / `ghost_match` | 1 / `oplus_` | ghost task 开关与调用方模块名前缀 |
 | `pid_max_cap` | 0 | 0 = 检测到 pid 索引型 vendor 模块才封顶；-1 从不；N 封顶到 N |
 | `kmi_override` | 空 | 安装期强制指定 KMI，recovery 刷机时用，改完要重装 |
+
+### 设备识别
+
+`service.sh` 会同时读取 `ro.product.vendor.brand`、`ro.product.brand`、厂商、机型、
+`ro.build.fingerprint` 和 device 名，命中 `oppo / oneplus / realme / oplus` 才加载
+`droid_lkm_compat.ko`。判定结果写进日志（`device: brand=... oplus=1`），WebUI 里也有
+“一加 / OPPO：是/否”和“兼容模块”两行，不用猜。
 
 ## 状态、日志与排障
 

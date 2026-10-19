@@ -1,20 +1,21 @@
 #!/bin/sh
-# 把 out/<kmi>/*.ko 打成可直接刷入的 Magisk / KernelSU / APatch 模块 zip
+# 把 out/<kmi>/*.ko 打成单个整包（所有 KMI 都在同一个 zip 里）
 #
 # 用法:
 #   scripts/package-module.sh                       # 自动发现 out/ 下已构建的 KMI
-#   scripts/package-module.sh android16-6.12        # 只打指定 KMI
+#   scripts/package-module.sh android16-6.12        # 只放指定 KMI
 #   scripts/package-module.sh --version v1.0.1 --code 2
 #
 # 产物:
-#   dist/phDroid-<ver>-<kmi>.zip    单 KMI，体积最小
-#   dist/phDroid-<ver>-all.zip      全 KMI 合集，装机时按运行内核挑
+#   dist/phDroid-<ver>.zip
+#
+# 安装时 customize.sh 用 uname -r 挑出本机那一份，其余构建直接删除。
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUTDIR=$ROOT/dist
-# 暂存目录放在工程内，Windows 上 mktemp 给出的是 C:\... 形式，
-# 清理时会被 safe-delete 当成相对路径处理而失败
+# 暂存目录放在工程内：Windows 上 mktemp 给出的是 C:\... 形式，
+# 清理时会被删除守卫当成相对路径处理而失败
 STAGE=$ROOT/build/stage
 VERSION=
 CODE=
@@ -37,7 +38,6 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-# 版本号、versionCode 默认取 module.prop
 prop_get() {
 	awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/, ""); print; exit}' "$ROOT/module/module.prop"
 }
@@ -98,7 +98,6 @@ stage() { # <kmi>...
 	prop_set "$STAGE/module.prop" version "$VERSION"
 	prop_set "$STAGE/module.prop" versionCode "$CODE"
 
-	# 安装脚本必须可执行，解压后管理器多半按 0644 落盘，这里先定好
 	chmod 0755 "$STAGE"/*.sh "$STAGE"/META-INF/com/google/android/update-binary
 }
 
@@ -130,21 +129,10 @@ make_zip() { # <zip path>
 echo "version: $VERSION ($CODE)"
 echo "kmis   : $KMIS"
 
-for k in $KMIS; do
-	stage "$k"
-	prop_set "$STAGE/module.prop" version "$VERSION ($k)"
-	z="$OUTDIR/phDroid-$VERSION-$k.zip"
-	make_zip "$z"
-	echo "  $z"
-done
-
-set -- $KMIS
-if [ $# -gt 1 ]; then
-	stage "$@"
-	z="$OUTDIR/phDroid-$VERSION-all.zip"
-	make_zip "$z"
-	echo "  $z"
-fi
+stage $KMIS
+z="$OUTDIR/phDroid-$VERSION.zip"
+make_zip "$z"
+echo "  $z"
 
 clean_dir "$STAGE"
 rmdir "$STAGE" 2>/dev/null || true
