@@ -8,3 +8,4 @@ build/
 *.mod
 *.mod.c
 .DS_Store
+node_modules/

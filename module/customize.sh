@@ -36,8 +36,10 @@ case "$(printf '%s %s %s %s %s' "$BRAND" "$MANUF" "$MODEL" "$FP" "$DEV" | tr 'A-
 esac
 
 # 内核没带 androidNN 时用系统版本兜底
+TAG_SRC=kernel
 if [ -z "$ANDROID_TAG" ]; then
 	ANDROID_TAG=$(getprop ro.build.version.release 2>/dev/null | sed -n 's/^\([0-9][0-9]*\).*/android\1/p')
+	if [ -n "$ANDROID_TAG" ]; then TAG_SRC=props; else TAG_SRC=none; fi
 fi
 
 # 必须 androidNN + 主次版本同时匹配，不跨标签猜
@@ -82,6 +84,10 @@ fi
 if [ -n "$TIE" ]; then
 	abort "! $RELEASE matches multiple builds:$BEST $TIE
 ! set kmi_override in config.conf to one of them and repack"
+fi
+if [ "$TAG_SRC" = none ]; then
+	ui_print "! no androidNN in kernel string or build props"
+	ui_print "  matched by kernel $MAJOR_MINOR only; set kmi_override if load fails"
 fi
 
 # 改写 config.conf 的 key，不存在就追加

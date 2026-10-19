@@ -115,6 +115,8 @@ WebUI 的状态也按这个分：已加载 / 加载失败 / 已阻断 / 未加�
 ## 自己构建
 
 ```sh
+npm --prefix webui install            # 只改 WebUI 时需要
+npm --prefix webui run build          # main.ts -> module/webroot/main.js
 scripts/fetch-deps.sh                 # 按 .sdk-version 拉 KMSDK，部署 deps.lst
 scripts/build-ddkk.sh android16-6.12  # 需要 docker，DDK 容器内编译
 scripts/package-module.sh             # 把 out/<kmi>/*.ko 打成 dist/*.zip
@@ -139,10 +141,13 @@ Makefile / mk/deps.mk         Kbuild 入口与 KMSDK 依赖展开
 deps.lst / .sdk-version       依赖清单与 SDK 版本钉子
 src/ compat/                  上游模块源码
 scripts/                      fetch-deps / build-ddkk / package-module / mkzip
+webui/src/main.ts             WebUI 源码（TypeScript）
+webui/                        cd webui && npm install && npm run build
 module/                       模块外壳（刷进 /data/adb/modules/phdroid）
   module.prop  customize.sh  config.conf  uninstall.sh
   service.sh                  唯一加载入口：崩溃标记 + insmod + 兼容模块
-  webroot/index.html          KernelSU / APatch WebUI（状态/日志/重试）
+  webroot/index.html          页面
+  webroot/main.js             由 main.ts 编译，已提交；CI 打包前会重建
   META-INF/…                  Magisk 官方 update-binary
                                 安装后：ko/ 存本机那份 ko；kmi、oplus、device_* 写进 config.conf
 out/<kmi>/*.ko                编译产物（gitignore）

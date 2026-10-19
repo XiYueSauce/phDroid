@@ -125,11 +125,10 @@ selinux_allow() {
 guarded_insmod() {
 	try_insmod "$@"
 	rc=$?
-	if [ "$rc" -ne 0 ] && [ "$SX_DONE" != 1 ] && [ "$(bool selinux_fix 0)" = 1 ]; then
+	if [ "$rc" -ne 0 ] && [ "$(bool selinux_fix 0)" = 1 ]; then
 		case "$INS_OUT" in
 		*"not permitted"* | *"Permission denied"* | *EPERM*)
 			if selinux_allow "$1"; then
-				SX_DONE=1
 				try_insmod "$@"
 				rc=$?
 			fi
@@ -160,6 +159,13 @@ if [ "$1" = "status" ]; then
 	echo "kmi=$(conf kmi -)"
 	if loaded droid_lkm; then echo "loaded=1"; else echo "loaded=0"; fi
 	if loaded droid_lkm_compat; then echo "compat=1"; else echo "compat=0"; fi
+	case "$(conf compat off)" in
+	on | 1 | yes | true) cw=on ;;
+	auto) [ "$(conf oplus 0)" = 1 ] && cw=on || cw=off ;;
+	*) cw=off ;;
+	esac
+	if [ "$cw" = on ] && [ ! -f "$MODDIR/ko/droid_lkm_compat.ko" ]; then cw=missing; fi
+	echo "compat_wanted=$cw"
 	if [ -f "$BLOCK" ]; then echo "blocked=1"; else echo "blocked=0"; fi
 	if [ -f "$MODDIR/insmod.crash" ]; then echo "crash=1"; else echo "crash=0"; fi
 	echo "last=$(cat "$MODDIR/last_result" 2>/dev/null)"
@@ -263,6 +269,7 @@ else
 	else
 		ph_log "droid_lkm_compat failed (rc=$rc)"
 		echo "fail: compat rc=$rc" > "$MODDIR/last_result"
+		exit 1
 	fi
 fi
 

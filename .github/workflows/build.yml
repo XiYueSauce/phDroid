@@ -84,6 +84,11 @@ jobs:
           find out -name '*.ko' | sort
           [ "$found" = 1 ] || { echo "no ko artifact at all"; exit 1; }
 
+      - name: Build WebUI
+        run: |
+          npm --prefix webui install --no-audit --no-fund
+          npm --prefix webui run build
+
       - name: Package zips
         run: |
           chmod +x scripts/*.sh
