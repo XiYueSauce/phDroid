@@ -1,0 +1,10 @@
+out/
+deps/
+.sdk/
+dist/
+build/
+*.o
+*.ko
+*.mod
+*.mod.c
+.DS_Store

@@ -1,0 +1,9 @@
+# <name> <rev>
+# KMSDK 只按名字拉库，URL 与推荐 rev 由 SDK 的 libs.lst 提供
+# 这里的 rev 是 _patchHarmony 实测可用的组合，只有 HooKern 做了替换：
+# 上游 deps.lst 记的 2c85ca2 已经不在仓库历史里（仓库被重写过），
+# 改用 KMSDK 注册表里的推荐 rev 936b978，二者 hk_* 接口一致
+KallRecon 138799c
+Type_info 7182dae
+KernCall 6b94207
+HooKern 936b978

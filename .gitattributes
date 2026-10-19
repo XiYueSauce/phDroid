@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.prop text eol=lf
+*.yml text eol=lf
+*.ko binary
+*.zip binary

@@ -1,0 +1,105 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.kmi }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      # DDK 容器自带该 KMI 的 kdir 与 clang；tag 失效时只改这一行
+      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-20260313
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi:
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android15-6.6
+          - android16-6.12
+    env:
+      KDIR: /opt/ddk/kdir/${{ matrix.kmi }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch KMSDK deps
+        run: sh scripts/fetch-deps.sh
+
+      - name: Build ${{ matrix.kmi }}
+        run: |
+          make VER=${{ matrix.kmi }} > build.log 2>&1 || { tail -80 build.log; exit 1; }
+          tail -5 build.log
+          if grep -nE "error:|warning:" build.log; then
+            echo "build log is not clean"
+            exit 1
+          fi
+          ls -l out/${{ matrix.kmi }}/*.ko
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ko-${{ matrix.kmi }}
+          path: out/${{ matrix.kmi }}/*.ko
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: package module
+    needs: build
+    # 某个 KMI 失败也把其余已构建的 KMI 打包出来
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ko-*
+          path: artifacts
+
+      - name: Collect ko
+        run: |
+          found=0
+          for d in artifacts/ko-*; do
+            [ -d "$d" ] || continue
+            kmi=${d#artifacts/ko-}
+            mkdir -p "out/$kmi"
+            cp -v "$d"/*.ko "out/$kmi/" || true
+            found=1
+          done
+          find out -name '*.ko' | sort
+          [ "$found" = 1 ] || { echo "no ko artifact at all"; exit 1; }
+
+      - name: Package zips
+        run: |
+          chmod +x scripts/*.sh
+          sh scripts/package-module.sh
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phDroid-module
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
