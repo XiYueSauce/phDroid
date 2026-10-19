@@ -1,15 +1,6 @@
 #!/system/bin/sh
 #
-# 在 late_start service 阶段加载 ko
-#
-# 为什么不用 post-fs-data：
-#   post-fs-data 是阻塞的、跑在 Zygote 之前，insmod 期间一旦内核出错会直接把开机卡死；
-#   late_start 是非阻塞的，模块出问题也不会挡住系统起来。
-#
-# 崩溃检测：
-#   insmod 前落一个标记文件（并 sync 到磁盘），insmod 正常返回后立刻删掉。
-#   下次开机如果标记还在，说明上一次是死在 insmod 里的，本次直接跳过并写 blocked，
-#   不再拿同一份 ko 去撞第二次开机。
+# late_start 加载 droid_lkm；insmod 期间用标记文件检测内核崩溃。
 
 MODDIR=${0%/*}
 [ -d "$MODDIR" ] || MODDIR=$(pwd)
@@ -26,7 +17,6 @@ ph_log() {
 		[ -n "$sz" ] && [ "$sz" -gt "$LOG_MAX" ] && mv -f "$LOG" "$LOG.1" 2>/dev/null
 	fi
 	echo "$(date '+%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null
-	# 没权限的设备上 /dev/kmsg 会失败，先探测再写
 	if [ -w /dev/kmsg ]; then
 		echo "<6>phDroid: $*" > /dev/kmsg 2>/dev/null
 	fi
@@ -34,6 +24,7 @@ ph_log() {
 	return 0
 }
 
+# 读 config 的 key，缺省用第二个参数
 conf() {
 	v=
 	if [ -f "$CONF" ]; then
@@ -51,15 +42,7 @@ bool() {
 	esac
 }
 
-uint() {
-	v=$(conf "$1" "$2")
-	case "$v" in
-	'' | *[!0-9]*) echo "$2" ;;
-	*) echo "$v" ;;
-	esac
-}
-
-# 允许负数：pid_max_cap 的 -1 表示“从不封顶”，不能用 uint
+# 允许负数：pid_max_cap=-1 表示从不封顶
 sint() {
 	v=$(conf "$1" "$2")
 	case "$v" in
@@ -99,7 +82,7 @@ insmod_ko() {
 	return 127
 }
 
-# 一次 insmod：落标记 -> 执行 -> 立刻删标记，结果留在 INS_RC / INS_OUT
+# 落标记 -> insmod -> 立刻删标记；结果在 INS_RC / INS_OUT
 try_insmod() {
 	f=$1
 	shift
@@ -112,9 +95,7 @@ try_insmod() {
 	return $INS_RC
 }
 
-# 只在确认是 SELinux 拒绝（EPERM）时才补一条最小规则：
-# 用调用者真实域 + ko 真实上下文拼，作用域只到这个文件。
-# Magisk 的 magisk 域本身是 permissive，正常不会走到这里
+# EPERM 时用真实域/上下文补一条最小 module_load 规则
 selinux_allow() {
 	ko=$1
 	mp=
@@ -141,7 +122,6 @@ selinux_allow() {
 	return 0
 }
 
-# 带崩溃标记执行；selinux_fix=1 且遇到 EPERM 时补规则后重试一次
 guarded_insmod() {
 	try_insmod "$@"
 	rc=$?
@@ -160,31 +140,6 @@ guarded_insmod() {
 	return $rc
 }
 
-# 设备指纹：品牌 / 厂商 / 机型 / fingerprint / device 名一起看。
-# 一加、OPPO、realme 的 vendor 模块共用 oplus 前缀，fingerprint 兜底最稳
-device_info() {
-	d_brand=$(getprop ro.product.vendor.brand 2>/dev/null)
-	[ -n "$d_brand" ] || d_brand=$(getprop ro.product.brand 2>/dev/null)
-	d_model=$(getprop ro.product.vendor.model 2>/dev/null)
-	[ -n "$d_model" ] || d_model=$(getprop ro.product.model 2>/dev/null)
-	d_manuf=$(getprop ro.product.vendor.manufacturer 2>/dev/null)
-	[ -n "$d_manuf" ] || d_manuf=$(getprop ro.product.manufacturer 2>/dev/null)
-	d_fp=$(getprop ro.build.fingerprint 2>/dev/null)
-	[ -n "$d_fp" ] || d_fp=$(getprop ro.vendor.build.fingerprint 2>/dev/null)
-	d_dev=$(getprop ro.product.vendor.device 2>/dev/null)
-	[ -n "$d_dev" ] || d_dev=$(getprop ro.product.device 2>/dev/null)
-	return 0
-}
-
-is_oplus() {
-	device_info
-	blob=$(printf '%s %s %s %s %s' "$d_brand" "$d_manuf" "$d_model" "$d_fp" "$d_dev" | tr 'A-Z' 'a-z')
-	case "$blob" in
-	*oppo* | *oneplus* | *realme* | *oplus*) return 0 ;;
-	esac
-	return 1
-}
-
 runtime() {
 	if [ -d /data/adb/ksu ]; then
 		echo KernelSU
@@ -197,23 +152,20 @@ runtime() {
 	fi
 }
 
-# ---- status 模式：WebUI 调用，只读不加载 ------------------------------
+# 只读状态，供 WebUI 调用
 if [ "$1" = "status" ]; then
-	device_info
-	if is_oplus; then oplus=1; else oplus=0; fi
 	echo "version=$(sed -n 's/^version=//p' "$MODDIR/module.prop" 2>/dev/null)"
 	echo "manager=$(runtime)"
 	echo "kernel=$(uname -r)"
-	echo "kmi=$(cat "$MODDIR/kmi" 2>/dev/null)"
+	echo "kmi=$(conf kmi -)"
 	if loaded droid_lkm; then echo "loaded=1"; else echo "loaded=0"; fi
 	if loaded droid_lkm_compat; then echo "compat=1"; else echo "compat=0"; fi
 	if [ -f "$BLOCK" ]; then echo "blocked=1"; else echo "blocked=0"; fi
 	if [ -f "$MODDIR/insmod.crash" ]; then echo "crash=1"; else echo "crash=0"; fi
 	echo "last=$(cat "$MODDIR/last_result" 2>/dev/null)"
-	echo "oplus=$oplus"
-	echo "brand=${d_brand:-?}"
-	echo "model=${d_model:-?}"
-	echo "fingerprint=${d_fp:-?}"
+	echo "oplus=$(conf oplus 0)"
+	echo "brand=$(conf device_brand -)"
+	echo "model=$(conf device_model -)"
 	for p in /sys/module/droid_lkm/parameters/*; do
 		[ -f "$p" ] || continue
 		echo "param.${p##*/}=$(cat "$p" 2>/dev/null)"
@@ -227,36 +179,35 @@ if [ "$1" = "status" ]; then
 	exit 0
 fi
 
-# ---- 崩溃闸门 ----------------------------------------------------------
+# 上次停在 insmod 里：置 blocked，本次不再加载
 if [ -f "$MARK" ]; then
 	mv -f "$MARK" "$MODDIR/insmod.crash" 2>/dev/null
 	: > "$BLOCK" 2>/dev/null
-	ph_log "previous insmod never returned, kernel died inside it; blocked (remove $BLOCK or use the WebUI retry)"
+	ph_log "previous insmod never returned, blocked"
 	exit 0
 fi
 if [ -f "$BLOCK" ]; then
-	ph_log "blocked by $BLOCK, skip loading"
+	ph_log "blocked, skip loading"
 	exit 0
 fi
 
-# ---- 核心模块 ----------------------------------------------------------
-KMI=$(cat "$MODDIR/kmi" 2>/dev/null)
-if is_oplus; then oplus=1; else oplus=0; fi
-ph_log "device: brand=${d_brand:-?} model=${d_model:-?} oplus=$oplus"
+# 核心模块
+KMI=$(conf kmi -)
+ph_log "start: kernel=$(uname -r) kmi=$KMI oplus=$(conf oplus 0)"
 
 core_ok=0
 if loaded droid_lkm; then
-	ph_log "droid_lkm already loaded, skip core insmod"
+	ph_log "droid_lkm already loaded"
 	core_ok=1
 else
 	KO=$MODDIR/ko/droid_lkm.ko
 	if [ ! -f "$KO" ]; then
-		ph_log "ko missing: $KO (reinstall the module)"
+		ph_log "ko missing: $KO"
 		echo "fail: core ko missing" > "$MODDIR/last_result"
 		exit 1
 	fi
 
-	ph_log "loading droid_lkm.ko (kmi=${KMI:-unknown}), kernel=$(uname -r)"
+	ph_log "loading droid_lkm.ko"
 	guarded_insmod "$KO" \
 		"verbose=$(bool verbose 0)" \
 		"gate=$(bool gate 0)" \
@@ -276,27 +227,24 @@ else
 		ph_log "droid_lkm loaded"
 		echo "ok: core" > "$MODDIR/last_result"
 	else
-		ph_log "droid_lkm load failed (rc=$rc)"
+		ph_log "droid_lkm failed (rc=$rc)"
 		echo "fail: core rc=$rc" > "$MODDIR/last_result"
 		dmesg 2>/dev/null | tail -n 15 >> "$LOG"
 	fi
 fi
 
-# 核心没起来，兼容模块没有意义
 [ "$core_ok" = 1 ] || exit 1
 
-# ---- vendor 兼容模块（独立阶段：核心已加载也会补加载） -----------------
-# 只有 OPPO / OnePlus / realme 的 vendor 模块会无检查地用 find_task_by_vpid
+# 兼容模块：安装时已按指纹把 compat 解析成 on/off
 COMPAT=$MODDIR/ko/droid_lkm_compat.ko
 want_compat=0
-case "$(conf compat auto)" in
-off | 0 | no | false) want_compat=0 ;;
+case "$(conf compat off)" in
 on | 1 | yes | true) want_compat=1 ;;
-*) [ "$oplus" = 1 ] && want_compat=1 ;;
+auto) [ "$(conf oplus 0)" = 1 ] && want_compat=1 ;;
 esac
 
 if [ "$want_compat" != 1 ]; then
-	ph_log "compat: not needed (oplus=$oplus, compat=$(conf compat auto))"
+	ph_log "compat: off (oplus=$(conf oplus 0))"
 elif [ ! -f "$COMPAT" ]; then
 	ph_log "compat: no build in this package"
 elif loaded droid_lkm_compat; then

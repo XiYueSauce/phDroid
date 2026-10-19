@@ -76,10 +76,10 @@ OTA 换了 KMI 需要重装模块（或重新刷合集包）。
 
 ### 设备识别
 
-`service.sh` 会同时读取 `ro.product.vendor.brand`、`ro.product.brand`、厂商、机型、
-`ro.build.fingerprint` 和 device 名，命中 `oppo / oneplus / realme / oplus` 才加载
-`droid_lkm_compat.ko`。判定结果写进日志（`device: brand=... oplus=1`），WebUI 里也有
-“一加 / OPPO：是/否”和“兼容模块”两行，不用猜。
+指纹在**刷入时**判定：`customize.sh` 读 `ro.product.vendor.brand`、`ro.product.brand`、厂商、
+机型、`ro.build.fingerprint`、device 名，命中 `oppo / oneplus / realme / oplus` 就把
+`oplus=1`、`device_brand`、`device_model` 写进 `config.conf`；`compat=auto` 同时被解析成
+`on` / `off`。开机只读配置，不再调 getprop，`service.sh` 也因此少了一整段设备识别代码。
 
 ## 状态、日志与排障
 
@@ -144,7 +144,7 @@ module/                       模块外壳（刷进 /data/adb/modules/phdroid）
   service.sh                  唯一加载入口：崩溃标记 + insmod + 兼容模块
   webroot/index.html          KernelSU / APatch WebUI（状态/日志/重试）
   META-INF/…                  Magisk 官方 update-binary
-                                安装后：ko/ 存本机那份 ko，kmi 记构建名
+                                安装后：ko/ 存本机那份 ko；kmi、oplus、device_* 写进 config.conf
 out/<kmi>/*.ko                编译产物（gitignore）
 dist/*.zip                    刷机包（gitignore）
 ```
