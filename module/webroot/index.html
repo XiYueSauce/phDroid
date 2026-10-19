@@ -104,17 +104,18 @@
     var idx = text.indexOf("---log---");
     var head = idx >= 0 ? text.slice(0, idx) : text;
     var log = idx >= 0 ? text.slice(idx + 9) : "";
-    var map = {}, params = [];
+    var map = {}, params = [], cparams = [];
     head.split("\n").forEach(function (line) {
       line = line.trim();
       if (!line) return;
       var i = line.indexOf("=");
       if (i < 0) return;
       var k = line.slice(0, i), v = line.slice(i + 1);
-      if (k.indexOf("param.") === 0) params.push(k.slice(6) + " = " + v);
+      if (k.indexOf("cparam.") === 0) cparams.push(k.slice(7) + " = " + v);
+      else if (k.indexOf("param.") === 0) params.push(k.slice(6) + " = " + v);
       else map[k] = v;
     });
-    return { map: map, params: params, log: log.trim() };
+    return { map: map, params: params, cparams: cparams, log: log.trim() };
   }
 
   function setBadge(id, text, cls) {
@@ -130,9 +131,10 @@
     var loaded = m.loaded === "1";
     var blocked = m.blocked === "1";
     var oplus = m.oplus === "1";
+    var failed = !loaded && !blocked && (m.last || "").indexOf("fail") === 0;
 
-    setBadge("state", loaded ? "已加载" : (blocked ? "已阻断" : "未加载"),
-             loaded ? "on" : (blocked ? "warn" : "off"));
+    setBadge("state", loaded ? "已加载" : blocked ? "已阻断" : failed ? "加载失败" : "未加载",
+             loaded ? "on" : (blocked || failed ? "warn" : "off"));
     setBadge("oplus", oplus ? "是" : "否", oplus ? "on" : "");
     setBadge("compat", m.compat === "1" ? "已加载" : (oplus ? "未加载" : "不需要"),
              m.compat === "1" ? "on" : "");
@@ -144,7 +146,11 @@
     document.getElementById("sub").textContent =
       (m.version ? m.version + " · " : "") + "droid_lkm · " + (m.manager || "");
 
-    document.getElementById("params").textContent = d.params.length ? d.params.join("\n") : "（模块未加载）";
+    var ptxt = d.params.join("\n");
+    if (d.cparams.length) {
+      ptxt += (ptxt ? "\n\n" : "") + "— 兼容模块 —\n" + d.cparams.join("\n");
+    }
+    document.getElementById("params").textContent = ptxt || "（模块未加载）";
     document.getElementById("log").textContent = d.log || "（空）";
   }
 
@@ -174,7 +180,7 @@
     if (busy) return;
     setBusy(true);
     document.getElementById("log").textContent = "解除阻断并重新加载 …";
-    sh("rm -f " + M + "/blocked " + M + "/insmod.crash; sh " + M + "/service.sh").then(function () {
+    sh("rm -f " + M + "/blocked " + M + "/insmod.crash " + M + "/insmod.inflight; sh " + M + "/service.sh").then(function () {
       loadStatus();
     });
   };

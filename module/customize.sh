@@ -28,25 +28,35 @@ MAJOR_MINOR=$(echo "$RELEASE" | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
 ANDROID_TAG=$(echo "$RELEASE" | sed -n 's/.*\(android[0-9][0-9]*\).*/\1/p')
 
 # ---- 选 KMI ------------------------------------------------------------
-# 打分：androidNN 命中 +4，主次版本命中 +2
+# 规则：只要内核或系统能给出 androidNN，就必须 androidNN + 主次版本同时匹配，
+# 绝不因为“主次版本一样”去猜另一个 Android 分支的构建（5.10 的 12/13 就是这样踩的）。
+# 内核字符串没带 androidNN 时，用 ro.build.version.release 兜一次底。
+if [ -z "$ANDROID_TAG" ]; then
+	ANDROID_TAG=$(getprop ro.build.version.release 2>/dev/null | sed -n 's/^\([0-9][0-9]*\).*/android\1/p')
+fi
+
 BEST=
-BEST_SCORE=0
 TIE=
+ALL=
 
 for d in "$MODPATH"/kernels/*; do
 	[ -d "$d" ] || continue
 	K=${d##*/}
+	ALL="$ALL $K"
 	K_ANDROID=${K%%-*}
 	K_KVER=${K#*-}
-	SCORE=0
-	[ -n "$MAJOR_MINOR" ] && [ "$K_KVER" = "$MAJOR_MINOR" ] && SCORE=$((SCORE + 2))
-	[ -n "$ANDROID_TAG" ] && [ "$K_ANDROID" = "$ANDROID_TAG" ] && SCORE=$((SCORE + 4))
-	[ "$SCORE" -eq 0 ] && continue
-	if [ "$SCORE" -gt "$BEST_SCORE" ]; then
+
+	if [ -n "$ANDROID_TAG" ]; then
+		[ "$K_ANDROID" = "$ANDROID_TAG" ] || continue
+		[ -z "$MAJOR_MINOR" ] || [ "$K_KVER" = "$MAJOR_MINOR" ] || continue
+	else
+		# 两边都没有 Android 标签时才只按主次版本匹配
+		[ -n "$MAJOR_MINOR" ] && [ "$K_KVER" = "$MAJOR_MINOR" ] || continue
+	fi
+
+	if [ -z "$BEST" ]; then
 		BEST=$K
-		BEST_SCORE=$SCORE
-		TIE=
-	elif [ "$SCORE" -eq "$BEST_SCORE" ]; then
+	else
 		TIE="$TIE $K"
 	fi
 done
@@ -57,18 +67,17 @@ OVERRIDE=$(sed -n 's/^[[:space:]]*kmi_override[[:space:]]*=[[:space:]]*//p' "$MO
 if [ -n "$OVERRIDE" ]; then
 	[ -d "$MODPATH/kernels/$OVERRIDE" ] || abort "! kmi_override=$OVERRIDE not in this zip"
 	BEST=$OVERRIDE
-	BEST_SCORE=99
 	TIE=
 	ui_print "- override : $BEST"
 fi
 
 if [ -z "$BEST" ]; then
-	abort "! no build matches kernel $RELEASE; this zip has: $(ls "$MODPATH/kernels" | tr '\n' ' ')"
+	abort "! no build matches kernel $RELEASE (android=${ANDROID_TAG:-?}, kver=${MAJOR_MINOR:-?}); this zip has:$ALL
+! if you know the right one, set kmi_override in config.conf and repack"
 fi
 if [ -n "$TIE" ]; then
-	# 只有内核版本里没有 androidNN 时才会同分（比如 5.10 对上 12/13 两个分支）
-	ui_print "! $RELEASE matches both $BEST$TIE, using $BEST"
-	ui_print "  if it fails to load, set kmi_override in config.conf and reinstall"
+	abort "! $RELEASE matches multiple builds:$BEST $TIE
+! set kmi_override in config.conf to one of them and repack"
 fi
 
 # ---- 只留这一份 ko -----------------------------------------------------

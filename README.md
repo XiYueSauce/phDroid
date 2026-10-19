@@ -35,6 +35,8 @@
 - ARM64、GKI 内核、内核允许加载未签名模块（stock GKI 默认允许）
 - 主目标 `android16-6.12`、`android15-6.6`；`android13-5.10` / `android13-5.15` / `android14-5.15` /
   `android14-6.1` 也会构建（这些内核通常已有原生 namespace，加载后基本是 no-op）
+- `android12-5.10` 不在构建矩阵里；安装时按 `androidNN` + 主次版本严格匹配，没有对应构建会直接拒绝，
+  不会拿 `android13-5.10` 去凑
 - 需要 BTF 才能做运行期布局校正；没有 BTF 的内核会退回编译期偏移并拒绝依赖布局的特性
 
 ## 安装
@@ -66,7 +68,7 @@ OTA 换了 KMI 需要重装模块（或重新刷合集包）。
 | `inline_hook` | 1 | 关闭后只保留 kprobe 路径 |
 | `write_path` | 0 | 0 = 内核 patch 原语；1 = 模块自己的 fixmap 写（仅复现 MTK 问题） |
 | `degrade` | 0 | 1 = 关键 hook 装不上也继续加载 |
-| `selinux_fix` | 1 | insmod 被 SELinux 拒绝时，用真实上下文补一条 `module_load` 规则重试（需要 magiskpolicy） |
+| `selinux_fix` | 0 | insmod 被 EPERM 拒绝时，用真实上下文补一条 `module_load` 规则重试（需要 magiskpolicy）；会改动运行中策略，默认关闭 |
 | `compat` | auto | `auto` 按品牌决定，`on`/`off` 强制 |
 | `ghost` / `ghost_match` | 1 / `oplus_` | ghost task 开关与调用方模块名前缀 |
 | `pid_max_cap` | 0 | 0 = 检测到 pid 索引型 vendor 模块才封顶；-1 从不；N 封顶到 N |
@@ -92,7 +94,11 @@ OTA 换了 KMI 需要重装模块（或重新刷合集包）。
 说明上一次是死在 `insmod` 里的，本次写入 `blocked` 并跳过加载，不会拿同一份 ko 连续撞开机。
 
 处理方式：修好（换对应 KMI / 关掉 `inline_hook` / `degrade=1`）后在 WebUI 点“重试加载”，
+它会同时清 `blocked`、`insmod.crash`、残留的 `insmod.inflight` 再跑一遍 `service.sh`；
 或者手动 `rm /data/adb/modules/phdroid/blocked` 再重启。
+
+核心模块和兼容模块是两段独立流程：核心已经加载时，重试仍会补加载之前失败的 `droid_lkm_compat.ko`。
+WebUI 的状态也按这个分：已加载 / 加载失败 / 已阻断 / 未加载，参数分核心与兼容两块显示。
 
 常见失败：
 
